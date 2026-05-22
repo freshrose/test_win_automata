@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "delphi_vcl": {
+      "url": "https://10.211.55.5:8765/mcp",
+      "headers": {
+        "Authorization": "Bearer anyone-can-vibe-now"
+      }
+    }
+  }
+}
