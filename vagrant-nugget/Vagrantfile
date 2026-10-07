@@ -1,0 +1,43 @@
+# Vagrantfile -- Nugget Portal dev/build VM (Hyper-V, GUI).
+#
+# Mirrors the host toolchain set up for the Nugget-Portal modernization:
+#   - IIS + ASP.NET 4.8 (runs the legacy Web Forms site)
+#   - .NET Framework 4.8.1 runtime
+#   - .NET 10 SDK (10.0.401, same build as the host)
+#   - Visual Studio Enterprise 2026 + NetWeb workload, .NET Framework 4.8/4.8.1
+#     targeting packs + 4.8 SDK, WCF tooling
+#
+# VS Enterprise is licensed by signing in inside the VM with the account the
+# subscription is assigned to (no key is baked in here).
+#
+# Usage (elevated PowerShell):
+#   $env:VAGRANT_DEFAULT_PROVIDER="hyperv"
+#   vagrant up nugget-dev
+#   vagrant snapshot save nugget-dev clean
+#   # then connect: Hyper-V Manager -> connect to "nugget-dev" (vagrant/vagrant)
+
+Vagrant.configure("2") do |config|
+  config.vm.box            = "gusztavvargadr/windows-10"
+  config.vm.communicator   = "winrm"
+  config.winrm.timeout     = 1800
+  config.vm.boot_timeout   = 1800
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+
+  config.vm.define "nugget-dev" do |node|
+    node.vm.hostname = "nugget-dev"
+    node.vm.provider "hyperv" do |hv|
+      hv.vmname     = "nugget-dev"
+      hv.cpus       = 4
+      hv.memory     = 8192
+      hv.maxmemory  = 8192
+      hv.enable_virtualization_extensions = false
+      hv.linked_clone = true
+    end
+    node.vm.provision "autologon", type: "shell", path: "provision/autologon.ps1"
+    node.vm.provision "iis",       type: "shell", path: "provision/install-iis.ps1"
+    node.vm.provision "netfx481",  type: "shell", path: "provision/install-netfx481.ps1", reboot: true
+    node.vm.provision "dotnet",    type: "shell", path: "provision/install-dotnet-sdk.ps1"
+    node.vm.provision "vs",        type: "shell", path: "provision/install-vs.ps1", reboot: true
+    node.vm.provision "verify",    type: "shell", path: "provision/verify.ps1", run: "always"
+  end
+end

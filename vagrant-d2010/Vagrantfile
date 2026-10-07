@@ -1,0 +1,71 @@
+# Vagrantfile -- avensio e2e test worker for the OLD (Delphi 2010) build.
+#
+# This is a copy of ../vagrant tuned to run the legacy Delphi 2010 avensio.exe as
+# a REFERENCE run, side by side with the new Delphi 13 worker (avensio-test1).
+# Distinct Hyper-V vmname + worker name so both boot in parallel without colliding.
+#
+# Difference from the D13 worker:
+#   - worker name        : d2010-test1            (D13 uses test1)
+#   - Hyper-V vmname      : avensio-d2010-test1    (D13 uses avensio-test1)
+#   - SUT exe            : the static D2010 avensio.exe, pushed into the VM at
+#                          C:\avensio-d2010\__bin over PowerShell Direct (VMBus) by
+#                          stage-d2010-build.host.ps1 -- the SAME no-SMB channel
+#                          avensio-test1 uses. Selected via the AVENSIO_EXEDIR
+#                          machine env var (run-avensio.ps1 / provision-test-db.ps1
+#                          honor it). Run that host script after each rebuild.
+#   - DB / Firebird      : identical -- FB 2.5 + SKOLA_test.FDB (per user choice).
+#
+# Usage (elevated PowerShell):
+#   $env:VAGRANT_DEFAULT_PROVIDER="hyperv"
+#   vagrant up d2010-test1
+#   vagrant snapshot save  d2010-test1 clean
+#   vagrant snapshot restore d2010-test1 clean
+
+WORKER = ENV.fetch("AVENSIO_D2010_WORKER", "d2010-test1")
+
+Vagrant.configure("2") do |config|
+  config.vm.box = "gusztavvargadr/windows-10"
+  config.vm.communicator = "winrm"
+  config.winrm.timeout = 1800
+  config.vm.boot_timeout = 1800
+
+  # Shares are mounted by provision/mount-shares.ps1 + stage-d2010-build.ps1 via
+  # New-SmbGlobalMapping (machine-wide, persistent). Disable the default synced
+  # folder so `vagrant up` does not prompt for SMB creds.
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+
+  config.vm.define WORKER do |node|
+    node.vm.hostname = WORKER
+    node.vm.provider "hyperv" do |hv|
+      hv.vmname = "avensio-#{WORKER}"        # => avensio-d2010-test1
+      hv.cpus = 2
+      hv.memory = 4096
+      hv.maxmemory = 6144
+      hv.enable_virtualization_extensions = false
+      hv.linked_clone = true                  # fast clone from the box's parent disk
+    end
+
+    # WORKER name is read by vm-bootstrap to pick its own inbox folder.
+    node.vm.provision "set-worker", type: "shell",
+      inline: "[Environment]::SetEnvironmentVariable('AVENSIO_WORKER', '#{WORKER}', 'Machine')"
+    node.vm.provision "autologon",  type: "shell", path: "provision/autologon.ps1"
+
+    # Logon entrypoint + agent host + operator CLAUDE.md, uploaded to LOCAL paths
+    # (they must not depend on a mounted share at boot). Shared with the D13 worker.
+    node.vm.provision "bootstrap-file", type: "file",
+      source: "../agents/vm-bootstrap.ps1", destination: "C:/avensio/vm-bootstrap.ps1"
+    node.vm.provision "agentpty-file", type: "file",
+      source: "../agents/agent_pty.py", destination: "C:/avensio/agent_pty.py"
+    node.vm.provision "claudemd-file", type: "file",
+      source: "../agents/test-operator.md", destination: "C:/avensio/agent/CLAUDE.md"
+
+    node.vm.provision "runtime",   type: "shell", path: "provision/install-runtime.ps1"
+    node.vm.provision "firebird",  type: "shell", path: "provision/install-firebird.ps1"
+    # NOTE: the legacy avensio.exe + resources are staged from the HOST over
+    # PowerShell Direct (VMBus) by stage-d2010-build.host.ps1, NOT by an in-VM
+    # provisioner -- the host firewall scopes SMB to the Netbird overlay, and this
+    # worker is driven the same no-SMB way as avensio-test1. Run that host script
+    # once after `vagrant up` (and after each rebuild) to (re)stage the SUT.
+    # bootstrap (start MCP + claude) runs at logon via the HKCU Run key, not here.
+  end
+end

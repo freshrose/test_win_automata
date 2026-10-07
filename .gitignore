@@ -1,0 +1,26 @@
+# secrets & runtime state — never commit
+config/auth.env
+io/
+runs/
+state/
+*.pid
+*.log
+server.out.log
+server.err.log
+cert.pem
+key.pem
+cert.pem.bak
+key.pem.bak
+__pycache__/
+*.pyc
+
+# VM / machine state — never commit
+.vagrant/
+*.vhdx
+*.vmdk
+*.vdi
+*.box
+
+# build output & large bundles
+_builds/
+vagrant-fbmig/migrate-bundle.zip

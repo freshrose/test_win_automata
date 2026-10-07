@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "yt": {
+      "command": "python",
+      "args": ["C:\\automata\\mcp\\yt_mcp.py"]
+    },
+    "delphi_vcl": {
+      "type": "http",
+      "url": "http://127.0.0.1:8765/mcp",
+      "headers": { "Authorization": "Bearer anyone-can-vibe-now" }
+    }
+  }
+}

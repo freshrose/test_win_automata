@@ -1,0 +1,65 @@
+# Vagrantfile — avensio e2e test workers (Hyper-V, Windows GUI sessions).
+#
+# Multi-machine: test1..testN. Each VM is one isolated test worker with its own
+# desktop, Firebird, .FDB templates, delphi_vcl MCP, and an interactive `claude`
+# test-operator. Provider is Hyper-V (coexists with the Docker Windows-container
+# setup; VirtualBox would conflict).
+#
+# Phase 0 proved GUI automation needs a real interactive desktop, so the box must
+# log in automatically and never lock the screen (handled in provision\autologon.ps1).
+#
+# Usage:
+#   $env:VAGRANT_DEFAULT_PROVIDER="hyperv"
+#   vagrant up test1
+#   vagrant snapshot save  test1 clean
+#   vagrant snapshot restore test1 clean
+
+WORKER_COUNT = Integer(ENV.fetch("AVENSIO_WORKERS", "1"))
+HOST_AUTOMATA = ENV.fetch("AVENSIO_AUTOMATA", "C:/Users/rosa/_rsm/__automata")
+
+Vagrant.configure("2") do |config|
+  config.vm.box = "gusztavvargadr/windows-10"
+  config.vm.communicator = "winrm"
+  config.winrm.timeout = 1800
+  config.vm.boot_timeout = 1800
+
+  # Sharing is done by provision/mount-shares.ps1 via New-SmbGlobalMapping
+  # (machine-wide + persistent), because vagrant's per-session SMB mount is not
+  # visible to the bootstrap scheduled task's session. Disable the default
+  # synced folder so `vagrant up` doesn't prompt for SMB creds.
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+
+  (1..WORKER_COUNT).each do |i|
+    name = "test#{i}"
+    config.vm.define name do |node|
+      node.vm.hostname = name
+      node.vm.provider "hyperv" do |hv|
+        hv.vmname = "avensio-#{name}"
+        hv.cpus = 2
+        hv.memory = 4096
+        hv.maxmemory = 6144
+        hv.enable_virtualization_extensions = false
+        hv.linked_clone = true            # fast clone from the box's parent disk
+      end
+
+      # WORKER name is read by vm-bootstrap to pick its own inbox folder.
+      node.vm.provision "set-worker", type: "shell",
+        inline: "[Environment]::SetEnvironmentVariable('AVENSIO_WORKER', '#{name}', 'Machine')"
+      node.vm.provision "autologon",  type: "shell", path: "provision/autologon.ps1"
+      # upload the logon entrypoint to a LOCAL path (it mounts the share itself,
+      # so it must not live on the share). Shares are mounted by this script at
+      # logon in the interactive session (net use), avoiding WinRM error 1312.
+      node.vm.provision "bootstrap-file", type: "file",
+        source: "../agents/vm-bootstrap.ps1", destination: "C:/avensio/vm-bootstrap.ps1"
+      # agent_pty.py local too (SMB serves stale copies; the PTY host must be current).
+      node.vm.provision "agentpty-file", type: "file",
+        source: "../agents/agent_pty.py", destination: "C:/avensio/agent_pty.py"
+      # operator instructions as CLAUDE.md, local (avoid stale SMB copy at boot).
+      node.vm.provision "claudemd-file", type: "file",
+        source: "../agents/test-operator.md", destination: "C:/avensio/agent/CLAUDE.md"
+      node.vm.provision "runtime",    type: "shell", path: "provision/install-runtime.ps1"
+      node.vm.provision "firebird",   type: "shell", path: "provision/install-firebird.ps1"
+      # bootstrap (start MCP + claude) runs at logon via scheduled task, not here.
+    end
+  end
+end

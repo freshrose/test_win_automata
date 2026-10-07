@@ -1,0 +1,88 @@
+# Vagrantfile -- one-time interactive Delphi 13.1 install VM (Hyper-V, GUI).
+#
+# Purpose: a clean Windows desktop where you run the RAD Studio 13.1 ESD
+# installer by hand (sign in, install Delphi + Win32/Win64, activate with the
+# serial). Afterwards the host captures the installed tree to bake a clean
+# Docker build image.
+#
+# The named-user license binds to the COMPUTER NAME, so the hostname is pinned
+# to "delphi-build" and reused as the container --hostname later. Do not rename.
+#
+# Usage (elevated PowerShell):
+#   $env:VAGRANT_DEFAULT_PROVIDER="hyperv"
+#   vagrant up delphi-build
+#   # then connect: Hyper-V Manager -> connect to "delphi-build" (auto-logged in)
+
+Vagrant.configure("2") do |config|
+  config.vm.box            = "gusztavvargadr/windows-10"
+  config.vm.communicator   = "winrm"
+  config.winrm.timeout     = 1800
+  config.vm.boot_timeout   = 1800
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+
+  config.vm.define "delphi-build" do |node|
+    node.vm.hostname = "delphi-build"
+    node.vm.provider "hyperv" do |hv|
+      hv.vmname     = "delphi-build"
+      hv.cpus       = 4
+      hv.memory     = 8192
+      hv.maxmemory  = 8192
+      hv.enable_virtualization_extensions = false
+      hv.linked_clone = true
+    end
+    node.vm.provision "autologon", type: "shell", path: "provision/autologon.ps1"
+    node.vm.provision "mkdir", type: "shell",
+      inline: "New-Item -ItemType Directory -Force C:\\delphi-setup | Out-Null"
+    # reliable WinRM upload of the installer (no SMB session needed)
+    node.vm.provision "installer", type: "file",
+      source: "C:/Users/rosa/dbuild/vmshare/in/setup.exe",
+      destination: "C:/delphi-setup/setup.exe"
+    node.vm.provision "shortcut", type: "shell", inline: <<-'PS'
+      $ws = New-Object -ComObject WScript.Shell
+      $lnk = $ws.CreateShortcut("C:\Users\Public\Desktop\Install Delphi 13.1.lnk")
+      $lnk.TargetPath = "C:\delphi-setup\setup.exe"; $lnk.Save()
+    PS
+    node.vm.provision "inspect", type: "shell", run: "always", path: "provision/inspect.ps1"
+    node.vm.provision "pkgcheck", type: "shell", run: "always", path: "provision/pkgcheck.ps1"
+    node.vm.provision "start-capture", type: "shell", run: "always", path: "provision/start-capture.ps1"
+    node.vm.provision "capdiag", type: "shell", run: "always", inline: <<-'PS'
+      Write-Host "--- task info ---"
+      Get-ScheduledTaskInfo -TaskName capture -ErrorAction SilentlyContinue | Format-List TaskName,LastRunTime,LastTaskResult | Out-String | Write-Host
+      Write-Host "--- capture.log ---"
+      if (Test-Path C:\delphi-setup\capture.log) { Get-Content C:\delphi-setup\capture.log } else { Write-Host 'no capture.log' }
+    PS
+    node.vm.provision "start-archive", type: "shell", run: "always", path: "provision/start-archive.ps1"
+    node.vm.provision "sizes", type: "shell", run: "always", inline: <<-'PS'
+      $s = "C:\Program Files (x86)\Embarcadero\Studio\37.0"
+      Get-ChildItem $s -Directory | ForEach-Object {
+        $b = (Get-ChildItem $_.FullName -Recurse -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
+        [PSCustomObject]@{ Dir=$_.Name; GB=[math]::Round($b/1GB,2) }
+      } | Sort-Object GB -Descending | Format-Table -AutoSize | Out-String | Write-Host
+      Write-Host "-- lib subdirs --"
+      Get-ChildItem "$s\lib" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+        $b = (Get-ChildItem $_.FullName -Recurse -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
+        [PSCustomObject]@{ Lib=$_.Name; GB=[math]::Round($b/1GB,2) }
+      } | Sort-Object GB -Descending | Format-Table -AutoSize | Out-String | Write-Host
+      $f = Get-PSDrive C
+      Write-Host ("C: free = {0:N1} GB" -f ($f.Free/1GB))
+      Write-Host ("tar.exe: " + (Test-Path C:\Windows\System32\tar.exe))
+    PS
+    node.vm.provision "netdiag", type: "shell", run: "always", inline: <<-'PS'
+      $gw = (Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway } | Select-Object -First 1).IPv4DefaultGateway.NextHop
+      Write-Host "gateway/host = $gw"
+      $t = Test-NetConnection -ComputerName $gw -Port 445 -WarningAction SilentlyContinue
+      Write-Host "445 reachable: $($t.TcpTestSucceeded)"
+      Write-Host "--- net use attempt (WinRM session) ---"
+      cmd /c "net use \\$gw\delphi-share /user:avensio_smb avensio26A" 2>&1 | Write-Host
+      Write-Host "--- dir share ---"
+      cmd /c "dir \\$gw\delphi-share" 2>&1 | Write-Host
+      cmd /c "net use \\$gw\delphi-share /delete /y" 2>&1 | Out-Null
+    PS
+    node.vm.provision "verify", type: "shell", run: "always", inline: <<-'PS'
+      Write-Host "HOSTNAME=$env:COMPUTERNAME"
+      $f = "C:\delphi-setup\setup.exe"
+      if (Test-Path $f) { Write-Host ("SETUP_PRESENT=True size={0}MB" -f [int]((Get-Item $f).Length/1MB)) } else { Write-Host "SETUP_PRESENT=False" }
+      Write-Host "SHORTCUT=$(Test-Path 'C:\Users\Public\Desktop\Install Delphi 13.1.lnk')"
+    PS
+  end
+end

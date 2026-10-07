@@ -153,9 +153,9 @@ async def delphi_launch_app(params: LaunchAppInput) -> str:
     _require_pywinauto(); global _app
     def _do():
         global _app
-        kwargs = {"backend": params.backend}
-        if params.work_dir: kwargs["work_dir"] = params.work_dir
-        _app = Application(**kwargs).start(params.app_path)
+        _app = Application(backend=params.backend)
+        start_kwargs = {"work_dir": params.work_dir} if params.work_dir else {}
+        _app.start(params.app_path, **start_kwargs)
         _app.wait_cpu_usage_lower(threshold=15, timeout=30)
         win = _app.top_window()
         return {"success": True, "process_id": _app.process, "window_title": win.window_text(), "backend": params.backend}
@@ -559,8 +559,17 @@ if __name__ == "__main__":
     print(f"Delphi VCL MCP server starting on {proto}://{host}:{port}/mcp", flush=True)
     print("API key: " + ("ENABLED" if API_KEY else "WARNING: not set — set DELPHI_MCP_API_KEY"), flush=True)
     print("TLS: " + ("ENABLED" if ssl_kwargs else "disabled"), flush=True)
-    # Monkey-patch uvicorn.run to inject host, port and SSL regardless of
-    # what FastMCP passes internally (mcp 1.x ignores FASTMCP_HOST/PORT env vars).
+    # FastMCP (mcp 1.x) builds the server via uvicorn.Config(...).serve(),
+    # not uvicorn.run(), so patch Config.__init__ to inject host, port and SSL.
+    _OrigConfig = _uv.Config
+    class _PatchedConfig(_OrigConfig):
+        def __init__(self, app, **kwargs):
+            kwargs["host"] = host
+            kwargs["port"] = port
+            kwargs.update(ssl_kwargs)
+            super().__init__(app, **kwargs)
+    _uv.Config = _PatchedConfig
+    # Keep the run() patch too, for older transports that use it.
     _orig = _uv.run
     def _patched(app, **kwargs):
         kwargs["host"] = host

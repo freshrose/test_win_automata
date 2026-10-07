@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "yt": {
+      "command": "C:\\Users\\rosa\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+      "args": ["C:\\Users\\rosa\\_rsm\\__automata\\mcp\\yt_mcp.py"]
+    }
+  }
+}

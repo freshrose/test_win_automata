@@ -1,0 +1,34 @@
+diff --git a/avensio/src/_/classes/starterC.pas b/avensio/src/_/classes/starterC.pas
+index d648e79ca..6e76eeaf9 100644
+--- a/avensio/src/_/classes/starterC.pas
++++ b/avensio/src/_/classes/starterC.pas
+@@ -1246,6 +1246,10 @@ class function starter.checkUpdates(userId: integer; visualizeNone: boolean = fa
+ var i: integer; msg: string;
+ begin
+   result := false;
++{$IFDEF DEBUG}
++  // debug: preskocit dotaz na aktualizace programu (zadny server check ani prompt)
++  exit;
++{$ENDIF}
+ 
+   updater := TUpdater.Create();
+   try
+diff --git a/avensio/src/app/loginF.pas b/avensio/src/app/loginF.pas
+index c9024a3ee..7eb5253fc 100644
+--- a/avensio/src/app/loginF.pas
++++ b/avensio/src/app/loginF.pas
+@@ -148,6 +148,14 @@ begin
+ 
+   if self.cbOrganization.Properties.Items.Count > 20 then
+     PostMessage(self.Handle, MSG_AFTER_SHOW, 0, 0);
++{$IFDEF DEBUG}
++  // debug autologin: vyber 1. organizaci, nastav uzivatele UNI_OMEGA + denni heslo 0000, prihlas
++  if self.cbOrganization.Visible and (self.cbOrganization.itemIndex = -1) and (self.cbOrganization.Properties.Items.Count > 0) then
++    self.cbOrganization.itemIndex := 0;
++  self.edtUserName.Text := 'UNI_OMEGA';
++  self.edtPassword.Text := '0000';
++  self.btnOKClick(self.btnOK);
++{$ENDIF}
+ end;
+ 
+ procedure TLoginForm.CreateParams(var Params: TCreateParams);

@@ -1,0 +1,38 @@
+# Vagrantfile -- avensio-fbmig : izolovaná simulace ZÁKAZNÍKA pro test migrace
+# Firebird 2.5 -> 5.0 (utilita avensioMigrate.exe). Hyper-V, vlastní VM
+# (NEpoužívá avensio-test1). Box je sdílený s ostatním setupem (jen cache).
+#
+# Použití (elevovaný PowerShell):
+#   $env:VAGRANT_DEFAULT_PROVIDER="hyperv"
+#   vagrant up
+#   vagrant snapshot save fbmig clean      # čistý stav před testem migrace
+#   vagrant winrm -c "..."                 # spuštění migrace / verifikace
+#
+# Sdílení (reuse existujících host shares avensio-db / avensio-automata):
+#   avensio_smb / avensio26A  (stejné jako vagrant/ setup)
+
+Vagrant.configure("2") do |config|
+  config.vm.box = "gusztavvargadr/windows-10"
+  config.vm.communicator = "winrm"
+  config.winrm.timeout = 1800
+  config.vm.boot_timeout = 1800
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+
+  config.vm.define "fbmig" do |node|
+    node.vm.hostname = "fbmig"
+    node.vm.provider "hyperv" do |hv|
+      hv.vmname = "avensio-fbmig"
+      hv.cpus = 2
+      hv.memory = 4096
+      hv.maxmemory = 6144
+      hv.enable_virtualization_extensions = false
+      hv.linked_clone = true
+    end
+
+    # 1) nainstaluj FB 2.5 jako službu (simulace zákazníka)
+    node.vm.provision "fb25", type: "shell", path: "provision/install-fb25.ps1"
+    # 2) "produkční" Avensio DB + UNI_OMEGA + avensio.ini + bundle
+    #    (DB/bundle se kopírují jednorázově přes transientní net use)
+    node.vm.provision "customer", type: "shell", path: "provision/setup-customer.ps1"
+  end
+end
